@@ -3,7 +3,7 @@
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef, useState } from "react";
 import type * as Leaflet from "leaflet";
-import { BASEMAP_CITIES, CITIES, INDIA_OUTLINE, ROUTES, resolveRoute, slicePath, type ResolvedRoute } from "@/lib/geo";
+import { BASEMAP_CITIES, BASE_ROADS, BASE_TOWNS, CITIES, INDIA_OUTLINE, ROUTES, resolveRoute, slicePath, type ResolvedRoute } from "@/lib/geo";
 import { fmtPlate } from "@/lib/format";
 import type { Truck, TruckStatus } from "@/lib/types";
 
@@ -27,10 +27,11 @@ const STATUS_COLOR: Record<TruckStatus, string> = {
 };
 
 const TILES = {
+  // OpenStreetMap's own tile server: free, no API key (attribution required).
   light: {
-    url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: "abcd",
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    subdomains: "abc",
   },
   streets: {
     url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -148,22 +149,67 @@ export default function FleetMap({ trucks, selectedId = null, onSelect, showLane
     if (!ready || !L || !map) return;
     tileRef.current?.remove();
     if (typeof window !== "undefined" && (window as unknown as { __SST_VECTOR_BASEMAP__?: boolean }).__SST_VECTOR_BASEMAP__) {
-      // Offline basemap: India outline + major cities (used where tile servers are blocked).
+      // Offline basemap (used where tile servers are blocked): India, national highways, cities.
+      rootRef.current?.classList.add("vector-base");
+      if (!map.getPane("base")) map.createPane("base").style.zIndex = "250"; // above tiles, below routes and trucks
+      const pane = "base";
       const g = L.layerGroup();
-      L.polygon(INDIA_OUTLINE, { color: "#b8c3d6", weight: 1.2, fillColor: "#ffffff", fillOpacity: 1, interactive: false }).addTo(g);
+      L.polygon(INDIA_OUTLINE, { color: "#c9c2b3", weight: 1.2, fillColor: "#f7f5f0", fillOpacity: 1, interactive: false, pane }).addTo(g);
+      const roads: [number, number][][] = [...BASE_ROADS.map((r) => r.path), ...ROUTES.map((r) => resolveRoute(r.id, false).points)];
+      for (const path of roads) L.polyline(path, { color: "#ffffff", weight: 5.5, opacity: 1, lineCap: "round", lineJoin: "round", interactive: false, pane }).addTo(g);
+      for (const path of roads) L.polyline(path, { color: "#f1b54d", weight: 2.4, opacity: 0.95, lineCap: "round", lineJoin: "round", interactive: false, pane }).addTo(g);
       for (const name of BASEMAP_CITIES) {
         const c = CITIES[name];
         L.marker(c.pos, {
-          icon: L.divIcon({ className: "", html: `<span class="base-city"><i></i>${name}</span>`, iconSize: [0, 0], iconAnchor: [3, 3] }),
+          icon: L.divIcon({ className: "", html: `<span class="base-city major"><i></i>${name}</span>`, iconSize: [0, 0], iconAnchor: [4, 4] }),
           interactive: false,
           keyboard: false,
+          pane,
         }).addTo(g);
       }
-      tileRef.current = g.addTo(map) as unknown as Leaflet.TileLayer;
+      const detail = L.layerGroup();
+      const shown = new Set(BASEMAP_CITIES);
+      for (const t of [...BASE_TOWNS, ...Object.values(CITIES).map((c) => ({ name: c.name, pos: c.pos }))]) {
+        if (shown.has(t.name)) continue;
+        shown.add(t.name);
+        L.marker(t.pos, {
+          icon: L.divIcon({ className: "", html: `<span class="base-city"><i></i>${t.name}</span>`, iconSize: [0, 0], iconAnchor: [3, 3] }),
+          interactive: false,
+          keyboard: false,
+          pane,
+        }).addTo(detail);
+      }
+      for (const r of BASE_ROADS) {
+        const mid = r.path[Math.floor(r.path.length / 2)];
+        L.marker(mid, {
+          icon: L.divIcon({ className: "", html: `<span class="nh-shield">${r.name}</span>`, iconSize: [0, 0], iconAnchor: [0, 0] }),
+          interactive: false,
+          keyboard: false,
+          pane,
+        }).addTo(detail);
+      }
+      const sea = (pos: [number, number], text: string) =>
+        L.marker(pos, { icon: L.divIcon({ className: "", html: `<span class="sea-label">${text}</span>`, iconSize: [0, 0], iconAnchor: [0, 0] }), interactive: false, keyboard: false, pane }).addTo(g);
+      sea([15.2, 66.6], "Arabian Sea");
+      sea([15.2, 86.2], "Bay of Bengal");
+      const syncDetail = () => {
+        if (map.getZoom() >= 6) detail.addTo(map);
+        else detail.remove();
+      };
+      syncDetail();
+      map.on("zoomend", syncDetail);
+      const group = g.addTo(map);
+      tileRef.current = {
+        remove: () => {
+          group.remove();
+          detail.remove();
+          map.off("zoomend", syncDetail);
+        },
+      } as unknown as Leaflet.TileLayer;
       return;
     }
     const cfg = TILES[tiles];
-    tileRef.current = L.tileLayer(cfg.url, { attribution: cfg.attribution, subdomains: cfg.subdomains, maxZoom: 19, detectRetina: true }).addTo(map);
+    tileRef.current = L.tileLayer(cfg.url, { attribution: cfg.attribution, subdomains: cfg.subdomains, maxZoom: 19 }).addTo(map);
   }, [ready, tiles]);
 
   // all lanes

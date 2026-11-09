@@ -2522,3 +2522,55 @@ a.stone:active {
     grid-column: span 2;
   }
 }
+
+/* offline basemap (shareable link): land, highways, cities */
+.map-root.vector-base,
+.map-root.vector-base .leaflet-container {
+  background: #dfe8f0;
+}
+.base-city {
+  font-size: 10.5px;
+  color: #6f7785;
+  text-shadow: 0 0 2px #f7f5f0, 0 0 2px #f7f5f0, 0 0 3px #f7f5f0;
+}
+.base-city.major {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3d4554;
+  gap: 6px;
+}
+.base-city.major i {
+  width: 7px;
+  height: 7px;
+  background: #fff;
+  border: 2px solid #6f7785;
+}
+.nh-shield {
+  display: inline-block;
+  transform: translate(-50%, -50%);
+  background: #1b7a3e;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  border: 1.5px solid #fff;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+.sea-label {
+  display: inline-block;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  color: #7f9cb8;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* soften the OpenStreetMap tiles so trucks and routes stand out */
+.map-root .leaflet-tile-pane {
+  filter: saturate(0.55) brightness(1.03) contrast(0.96);
+}
