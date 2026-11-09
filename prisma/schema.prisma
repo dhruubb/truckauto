@@ -1,0 +1,218 @@
+// Production data model for Shree Sai Trucks.
+// The demo runs on seeded in-browser data (src/lib/seed.ts) with the same shape,
+// so moving to PostgreSQL means implementing src/server/repository.ts with Prisma.
+//
+//   npm i -D prisma && npm i @prisma/client
+//   DATABASE_URL=postgresql://... npx prisma migrate dev
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TruckStatus {
+  MOVING
+  DELAYED
+  ATTENTION
+  IDLE
+  MAINTENANCE
+  ARRIVED
+}
+
+enum ShipmentStatus {
+  ORDER_CONFIRMED
+  PICKUP_COMPLETED
+  IN_TRANSIT
+  DELAYED
+  OUT_FOR_DELIVERY
+  DELIVERED
+}
+
+enum DriverStatus {
+  ON_TRIP
+  AVAILABLE
+  RESTING
+  OFF_DUTY
+}
+
+enum Channel {
+  WHATSAPP
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum AlertSeverity {
+  CRITICAL
+  WARNING
+  INFO
+}
+
+enum AlertState {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model Truck {
+  id            String         @id @default(cuid())
+  registration  String         @unique // MH12AB1234
+  model         String
+  vehicleType   String
+  capacityTons  Float
+  modelYear     Int
+  depotCity     String
+  status        TruckStatus    @default(IDLE)
+  odometerKm    Float          @default(0)
+  fuelPct       Float?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  assignments   DriverAssignment[]
+  shipments     Shipment[]
+  gpsLocations  GpsLocation[]
+  alerts        Alert[]
+}
+
+model Driver {
+  id               String         @id @default(cuid())
+  name             String
+  phone            String
+  licenseNumber    String         @unique
+  experienceYears  Int
+  rating           Float          @default(5)
+  homeCity         String
+  status           DriverStatus   @default(AVAILABLE)
+  createdAt        DateTime       @default(now())
+
+  assignments      DriverAssignment[]
+  shipments        Shipment[]
+}
+
+/// A driver can drive different trucks over time.
+model DriverAssignment {
+  id         String    @id @default(cuid())
+  truck      Truck     @relation(fields: [truckId], references: [id])
+  truckId    String
+  driver     Driver    @relation(fields: [driverId], references: [id])
+  driverId   String
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+
+  @@index([truckId, endedAt])
+  @@index([driverId, endedAt])
+}
+
+model Customer {
+  id          String     @id @default(cuid())
+  company     String
+  contactName String
+  phone       String
+  email       String?
+  city        String
+  industry    String?
+  whatsappOptIn Boolean  @default(true)
+  createdAt   DateTime   @default(now())
+
+  shipments     Shipment[]
+  notifications Notification[]
+}
+
+model Shipment {
+  id               String          @id // tracking ID, e.g. SST-2026-001
+  customer         Customer        @relation(fields: [customerId], references: [id])
+  customerId       String
+  truck            Truck?          @relation(fields: [truckId], references: [id])
+  truckId          String?
+  driver           Driver?         @relation(fields: [driverId], references: [id])
+  driverId         String?
+  pickupCity       String
+  deliveryCity     String
+  routeCode        String
+  cargo            String
+  weightTons       Float
+  freightInr       Int
+  status           ShipmentStatus  @default(ORDER_CONFIRMED)
+  plannedEta       DateTime
+  currentEta       DateTime
+  delayReason      String?
+  dispatchedAt     DateTime?
+  deliveredAt      DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  events           DeliveryEvent[]
+  notifications    Notification[]
+  alerts           Alert[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([truckId])
+}
+
+model GpsLocation {
+  id         BigInt    @id @default(autoincrement())
+  truck      Truck     @relation(fields: [truckId], references: [id])
+  truckId    String
+  lat        Float
+  lng        Float
+  speedKmph  Float
+  heading    Float?
+  recordedAt DateTime
+  source     String    @default("simulator") // "device" once GPS hardware is connected
+
+  @@index([truckId, recordedAt])
+}
+
+model DeliveryEvent {
+  id          String    @id @default(cuid())
+  shipment    Shipment  @relation(fields: [shipmentId], references: [id])
+  shipmentId  String
+  label       String
+  location    String
+  occurredAt  DateTime
+
+  @@index([shipmentId, occurredAt])
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  shipment    Shipment            @relation(fields: [shipmentId], references: [id])
+  shipmentId  String
+  customer    Customer            @relation(fields: [customerId], references: [id])
+  customerId  String
+  channel     Channel
+  kind        String // Shipment Dispatched, In Transit, Delivery Delay, ...
+  message     String
+  status      NotificationStatus  @default(PENDING)
+  trigger     String              @default("Automatic")
+  providerRef String?
+  createdAt   DateTime            @default(now())
+
+  @@index([shipmentId])
+  @@index([status])
+}
+
+model Alert {
+  id          String         @id @default(cuid())
+  severity    AlertSeverity
+  kind        String
+  title       String
+  detail      String
+  state       AlertState     @default(OPEN)
+  truck       Truck?         @relation(fields: [truckId], references: [id])
+  truckId     String?
+  shipment    Shipment?      @relation(fields: [shipmentId], references: [id])
+  shipmentId  String?
+  createdAt   DateTime       @default(now())
+
+  @@index([state, severity])
+}
