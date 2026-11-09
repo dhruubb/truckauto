@@ -6,11 +6,12 @@ import { useEffect, useState } from "react";
 import FleetMap from "@/components/FleetMap";
 import { ShipmentTimeline } from "@/components/ShipmentTimeline";
 import { AssignTruckModal } from "@/components/ShipmentModals";
+import { ClientsPanel } from "@/components/ClientsPanel";
 import { ContactModal } from "@/components/ContactModal";
 import { IconCheckCircle, IconChevronLeft, IconChevronRight, IconPackage, IconPhone, IconSatellite, IconZap } from "@/components/icons";
 import { Avatar, Empty, Plate, ShipmentStatusBadge, cx, useNow } from "@/components/ui";
 import { resolveRoute } from "@/lib/geo";
-import { actions, delayMinutes, findCustomer, findDriver, findTruck, isOnRoad, simNow, truckLocation, useAppState } from "@/lib/store";
+import { actions, delayMinutes, findCustomer, findDriver, findTruck, isOnRoad, shipmentClients, simNow, truckLocation, useAppState } from "@/lib/store";
 import { fmtDayTime, fmtDuration, fmtINR, fmtKm, fmtNum, fmtRel } from "@/lib/format";
 import type { ShipmentStatus } from "@/lib/types";
 
@@ -82,7 +83,8 @@ export default function ShipmentDetailPage() {
             {x.pickup} → {x.delivery}
           </h1>
           <p>
-            {c.company} · {route.def.highway} · {fmtKm(route.totalKm)}
+            {c.company}
+            {x.extraClients?.length ? ` +${x.extraClients.length} more` : ""} · {route.def.highway} · {fmtKm(route.totalKm)}
           </p>
         </div>
         <div className="only-desk">{advanceBtn}</div>
@@ -165,6 +167,7 @@ export default function ShipmentDetailPage() {
         </div>
 
         <div className="stack-gap">
+          <ClientsPanel shipment={x} />
           <div>
             <div className="section-title" style={{ marginTop: 8 }}>
               <h2 style={{ fontSize: 17 }}>Truck &amp; driver</h2>
@@ -217,10 +220,8 @@ export default function ShipmentDetailPage() {
             </div>
             <div className="group">
               {[
-                ["Customer", c.company],
-                ["Contact", `${c.contact} · ${c.phone}`],
-                ["Cargo", x.cargo],
-                ["Weight", `${x.weightT} tonnes`],
+                ["Clients", String(shipmentClients(x).length)],
+                ["Total load", `${x.weightT} tonnes${t ? ` of ${t.capacityT}` : ""}`],
                 ["Dispatched", x.dispatchAt ? fmtDayTime(x.dispatchAt, now) : "Not yet"],
                 ["Freight", fmtINR(x.freightInr)],
               ].map(([k, v]) => (

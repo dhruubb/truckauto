@@ -7,9 +7,9 @@
 
 import { useSyncExternalStore } from "react";
 import { CITIES, PLANNED_KMPH, describeLocation, pointAlong, resolveRoute } from "./geo";
-import { DELAY_REASONS, buildMessage, trackingLink } from "./messages";
+import { DELAY_REASONS, buildMessage, cargoPhrase } from "./messages";
 import { SCHEMA_VERSION, createSeed } from "./seed";
-import { delayMinutes, findCustomer, findDriver, findShipment, findTruck, isOnRoad, truckLocation } from "./selectors";
+import { delayMinutes, findCustomer, findDriver, findShipment, findTruck, isOnRoad, shipmentClients, truckLocation } from "./selectors";
 import type {
   Alert,
   AlertSeverity,
@@ -183,7 +183,7 @@ export function useAppState(): AppState | null {
 // ---------------------------------------------------------------------------
 // helpers
 
-export { findTruck, findShipment, findDriver, findCustomer, heroOf, ON_ROAD, isOnRoad, delayMinutes, truckLocation } from "./selectors";
+export { findTruck, findShipment, findDriver, findCustomer, heroOf, ON_ROAD, isOnRoad, delayMinutes, truckLocation, shipmentClients } from "./selectors";
 
 function addEvent(d: AppState, shipmentId: string, label: string, location: string, at = simNow(d)) {
   d.counters.event += 1;
@@ -198,6 +198,7 @@ function addAlert(d: AppState, a: { severity: AlertSeverity; kind: string; title
 }
 
 const AUTO_SETTING: Record<NotificationKind, keyof Settings> = {
+  "Order Confirmed": "autoDispatch",
   "Shipment Dispatched": "autoDispatch",
   "In Transit": "autoInTransit",
   "Delivery Delay": "autoDelay",
@@ -206,69 +207,98 @@ const AUTO_SETTING: Record<NotificationKind, keyof Settings> = {
   Delivered: "autoDelivered",
 };
 
-/** Queue a simulated WhatsApp/SMS. It flips from Pending to Sent/Failed after a moment. */
+/** Set while a person's action runs, so its WhatsApp messages show a confirmation toast. */
+let userAction = false;
+function asUser<T>(fn: () => T): T {
+  userAction = true;
+  try {
+    return fn();
+  } finally {
+    userAction = false;
+  }
+}
+
+/**
+ * Queue a WhatsApp update to every client on the trip (or just one).
+ * Messages start Pending and flip to Sent after a moment (simulated delivery).
+ */
 function queueNotification(
   d: AppState,
   s: Shipment,
   kind: NotificationKind,
-  opts: { trigger?: "Automatic" | "Manual"; channel?: Channel; near?: string; next?: string } = {},
-): CustomerNotification | null {
+  opts: { trigger?: "Automatic" | "Manual"; channel?: Channel; near?: string; next?: string; onlyCustomerId?: string } = {},
+): number {
   const trigger = opts.trigger ?? "Automatic";
-  if (trigger === "Automatic" && !d.settings[AUTO_SETTING[kind]]) return null;
-  const customer = findCustomer(d, s.customerId);
-  if (!customer) return null;
+  if (trigger === "Automatic" && !d.settings[AUTO_SETTING[kind]]) return 0;
   let channel: Channel = opts.channel ?? (d.settings.whatsappEnabled ? "WhatsApp" : "SMS");
   if (channel === "WhatsApp" && !d.settings.whatsappEnabled) channel = "SMS";
   if (channel === "SMS" && !d.settings.smsEnabled) {
-    if (!d.settings.whatsappEnabled) return null;
+    if (!d.settings.whatsappEnabled) return 0;
     channel = "WhatsApp";
   }
   const now = simNow(d);
   let near = opts.near;
   let next = opts.next;
-  if (kind === "In Transit" && (!near || !next)) {
-    const t = findTruck(d, s.truckId);
-    if (t) {
-      const loc = describeLocation(resolveRoute(s.routeId, s.reversed), t.kmDone);
-      near = loc.near;
-      next = loc.next;
-    }
+  const t = findTruck(d, s.truckId);
+  if (kind === "In Transit" && (!near || !next) && t) {
+    const loc = describeLocation(resolveRoute(s.routeId, s.reversed), t.kmDone);
+    near = loc.near;
+    next = loc.next;
   }
-  d.counters.notification += 1;
-  const n: CustomerNotification = {
-    id: `NT-${d.counters.notification}`,
-    shipmentId: s.id,
-    customerId: customer.id,
-    channel,
-    kind,
-    trigger,
-    status: "Pending",
-    createdAt: now,
-    message: buildMessage(kind, {
-      customerName: customer.contact,
+  const ids: string[] = [];
+  const names: string[] = [];
+  for (const cl of shipmentClients(s)) {
+    if (opts.onlyCustomerId && cl.customerId !== opts.onlyCustomerId) continue;
+    const customer = findCustomer(d, cl.customerId);
+    if (!customer) continue;
+    d.counters.notification += 1;
+    const n: CustomerNotification = {
+      id: `NT-${d.counters.notification}`,
       shipmentId: s.id,
-      pickup: s.pickup,
-      delivery: s.delivery,
-      eta: s.eta,
-      now,
-      near,
-      next,
-      reason: s.delayReason,
-      trackingLink: trackingLink(s.id),
-      company: d.settings.companyName,
-    }),
-  };
-  d.notifications.unshift(n);
-  if (d.notifications.length > 400) d.notifications.length = 400;
+      customerId: customer.id,
+      channel,
+      kind,
+      trigger,
+      status: "Pending",
+      createdAt: now,
+      message: buildMessage(kind, {
+        customerName: customer.contact,
+        shipmentId: s.id,
+        pickup: s.pickup,
+        delivery: s.delivery,
+        eta: s.eta,
+        now,
+        near,
+        next,
+        reason: s.delayReason,
+        cargo: cargoPhrase(cl.cargo, cl.weightT),
+        vehicle: t?.reg ?? null,
+        company: d.settings.companyName,
+      }),
+    };
+    d.notifications.unshift(n);
+    ids.push(n.id);
+    names.push(customer.contact.split(" ")[0]);
+  }
+  if (d.notifications.length > 500) d.notifications.length = 500;
   s.lastNotifiedEta = s.eta;
-  const delivered = Math.random() > 0.03;
+  if (!ids.length) return 0;
+  const showToast = userAction || trigger === "Manual";
   setTimeout(() => {
     mutate((dd) => {
-      const target = dd.notifications.find((x) => x.id === n.id);
-      if (target && target.status === "Pending") target.status = delivered ? "Sent" : "Failed";
+      for (const id of ids) {
+        const target = dd.notifications.find((x) => x.id === id);
+        if (target && target.status === "Pending") target.status = "Sent";
+      }
     });
-  }, 1400);
-  return n;
+    if (showToast)
+      pushToast({
+        tone: channel === "WhatsApp" ? "whatsapp" : "sms",
+        title: ids.length > 1 ? `${channel} sent to ${ids.length} clients` : `${channel} sent to ${names[0]}`,
+        body: `${kind} · ${s.id}${ids.length > 1 ? ` · ${names.join(", ")}` : ""}`,
+      });
+  }, 1200);
+  return ids.length;
 }
 
 function recomputeEta(d: AppState, s: Shipment, t: Truck, now: number) {
@@ -445,7 +475,36 @@ function tick(d: AppState, dtReal: number) {
 // ---------------------------------------------------------------------------
 // actions (used by UI + demo controls)
 
-export const actions = {
+export interface NewClientInput {
+  /** existing client, or leave empty and give newClient */
+  customerId?: string;
+  newClient?: { contact: string; company: string; phone: string; city: string };
+  cargo: string;
+  weightT: number;
+}
+
+function resolveClient(d: AppState, c: NewClientInput): string {
+  if (c.customerId) return c.customerId;
+  const nc = c.newClient!;
+  const existing = d.customers.find((x) => x.phone.replace(/\D/g, "").slice(-10) === nc.phone.replace(/\D/g, "").slice(-10));
+  if (existing) return existing.id;
+  const id = `CUS-${(d.customers.length + 1).toString().padStart(3, "0")}`;
+  const digits = nc.phone.replace(/\D/g, "").slice(-10);
+  d.customers.push({
+    id,
+    contact: nc.contact.trim(),
+    company: nc.company.trim() || nc.contact.trim(),
+    phone: `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`,
+    email: "",
+    city: nc.city,
+    industry: "—",
+    since: new Date(simNow(d)).getFullYear(),
+    demo: false,
+  });
+  return id;
+}
+
+const rawActions = {
   setRunning(running: boolean) {
     mutate((d) => {
       d.sim.running = running;
@@ -674,7 +733,8 @@ export const actions = {
     return id;
   },
 
-  createShipment(input: { customerId: string; routeId: string; reversed: boolean; cargo: string; weightT: number; truckId: string | null }) {
+  /** Create a trip. A truck can carry goods for several clients; each gets their own WhatsApp updates. */
+  createShipment(input: { routeId: string; reversed: boolean; truckId: string | null; clients: NewClientInput[] }) {
     let id = "";
     mutate((d) => {
       d.counters.shipment += 1;
@@ -683,18 +743,20 @@ export const actions = {
       const now = simNow(d);
       const t = findTruck(d, input.truckId);
       const planned = now + 3 * H + (route.totalKm / PLANNED_KMPH) * H;
+      const clients = input.clients.map((c) => ({ customerId: resolveClient(d, c), cargo: c.cargo, weightT: c.weightT }));
+      const total = Math.round(clients.reduce((n, c) => n + c.weightT, 0) * 10) / 10;
       const s: Shipment = {
         id,
-        customerId: input.customerId,
+        customerId: clients[0].customerId,
         pickup: route.origin,
         delivery: route.destination,
         routeId: input.routeId,
         reversed: input.reversed,
         truckId: t?.id ?? null,
         driverId: t?.driverId ?? null,
-        cargo: input.cargo,
-        weightT: input.weightT,
-        freightInr: Math.round((route.totalKm * 60 + input.weightT * 900) / 100) * 100,
+        cargo: clients[0].cargo,
+        weightT: total,
+        freightInr: Math.round((route.totalKm * 60 + total * 900) / 100) * 100,
         createdAt: now,
         assignedAt: t ? now : null,
         pickedUpAt: null,
@@ -707,9 +769,10 @@ export const actions = {
         delayReason: null,
         status: "Order Confirmed",
         lastNotifiedEta: null,
+        extraClients: clients.slice(1),
       };
       d.shipments.push(s);
-      addEvent(d, id, "Shipment created", route.origin, now);
+      addEvent(d, id, clients.length > 1 ? `Shipment created for ${clients.length} clients` : "Shipment created", route.origin, now);
       if (t) {
         t.shipmentId = id;
         t.routeId = input.routeId;
@@ -721,11 +784,40 @@ export const actions = {
         if (drv) drv.status = "Available";
         addEvent(d, id, `Truck ${t.reg} assigned`, t.depot, now);
       } else {
-        addAlert(d, { severity: "warning", kind: "Assignment missing", title: `${id} has no truck assigned`, detail: `${route.origin} → ${route.destination} · ${input.cargo}`, truckId: null, shipmentId: id });
+        addAlert(d, { severity: "warning", kind: "Assignment missing", title: `${id} has no truck assigned`, detail: `${route.origin} → ${route.destination}`, truckId: null, shipmentId: id });
       }
+      queueNotification(d, s, "Order Confirmed");
     });
-    pushToast({ tone: "success", title: "Shipment created", body: id });
+    pushToast({ tone: "success", title: "Shipment created", body: `${id} · ${input.clients.length} client${input.clients.length > 1 ? "s" : ""}` });
     return id;
+  },
+
+  /** Add another client's goods to a trip that hasn't been delivered yet. */
+  addClient(shipmentId: string, client: NewClientInput) {
+    mutate((d) => {
+      const s = findShipment(d, shipmentId);
+      if (!s || s.status === "Delivered") return;
+      const customerId = resolveClient(d, client);
+      s.extraClients = [...(s.extraClients ?? []), { customerId, cargo: client.cargo, weightT: client.weightT }];
+      s.weightT = Math.round((s.weightT + client.weightT) * 10) / 10;
+      s.freightInr += Math.round((client.weightT * 2600) / 100) * 100;
+      const c = findCustomer(d, customerId);
+      addEvent(d, s.id, `Client added: ${c?.company ?? c?.contact ?? "client"} · ${client.weightT} t`, s.pickup);
+      queueNotification(d, s, "Order Confirmed", { onlyCustomerId: customerId });
+    });
+  },
+
+  removeClient(shipmentId: string, customerId: string) {
+    mutate((d) => {
+      const s = findShipment(d, shipmentId);
+      if (!s) return;
+      const c = (s.extraClients ?? []).find((x) => x.customerId === customerId);
+      if (!c) return;
+      s.extraClients = s.extraClients.filter((x) => x.customerId !== customerId);
+      s.weightT = Math.round((s.weightT - c.weightT) * 10) / 10;
+      addEvent(d, s.id, "Client removed from trip", s.pickup);
+    });
+    pushToast({ tone: "info", title: "Client removed" });
   },
 
   assignTruckToShipment(shipmentId: string, truckId: string) {
@@ -818,10 +910,10 @@ export const actions = {
     });
   },
 
-  sendManualNotification(shipmentId: string, kind: NotificationKind, channel: Channel) {
+  sendManualNotification(shipmentId: string, kind: NotificationKind, channel: Channel, onlyCustomerId?: string) {
     mutate((d) => {
       const s = findShipment(d, shipmentId);
-      if (s) queueNotification(d, s, kind, { trigger: "Manual", channel });
+      if (s) queueNotification(d, s, kind, { trigger: "Manual", channel, onlyCustomerId });
     });
   },
 
@@ -855,6 +947,11 @@ export const actions = {
     });
   },
 };
+
+/** Every action runs as a person's action, so the WhatsApp messages it triggers show a confirmation. */
+export const actions = Object.fromEntries(
+  Object.entries(rawActions).map(([k, fn]) => [k, (...args: unknown[]) => asUser(() => (fn as (...a: unknown[]) => unknown)(...args))]),
+) as typeof rawActions;
 
 export function stopEngineForTests() {
   if (timer) clearInterval(timer);

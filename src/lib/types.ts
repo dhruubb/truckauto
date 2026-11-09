@@ -73,6 +73,15 @@ export interface Customer {
   city: string;
   industry: string;
   since: number;
+  /** seeded demo customer with a fictional number (never messaged for real) */
+  demo: boolean;
+}
+
+/** One client's goods on a truck. A trip can carry part loads for several clients. */
+export interface ShipmentClient {
+  customerId: string;
+  cargo: string;
+  weightT: number;
 }
 
 export interface Shipment {
@@ -99,10 +108,13 @@ export interface Shipment {
   delayReason: string | null;
   status: ShipmentStatus;
   lastNotifiedEta: number | null;
+  /** additional clients sharing this truck (part loads); the primary client is customerId/cargo/weightT */
+  extraClients: ShipmentClient[];
 }
 
 export type Channel = "WhatsApp" | "SMS";
 export type NotificationKind =
+  | "Order Confirmed"
   | "Shipment Dispatched"
   | "In Transit"
   | "Delivery Delay"

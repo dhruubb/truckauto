@@ -113,6 +113,7 @@ export default function ShipmentsPage() {
                   </span>
                   <span className="cell-sub ellipsis" style={{ display: "block" }}>
                     {c?.company}
+                    {x.extraClients?.length ? ` +${x.extraClients.length} more client${x.extraClients.length > 1 ? "s" : ""}` : ""}
                   </span>
                   <span style={{ display: "block", margin: "9px 0 6px" }}>
                     <Progress value={progressOf(x)} tone={x.status === "Delayed" ? "orange" : x.status === "Delivered" ? "green" : undefined} />
@@ -164,7 +165,7 @@ export default function ShipmentsPage() {
                     <td className="cell-main num">{x.id}</td>
                     <td>
                       <div className="cell-main">{c?.company}</div>
-                      <div className="cell-sub">{c?.contact}</div>
+                      <div className="cell-sub">{x.extraClients?.length ? `+${x.extraClients.length} more client${x.extraClients.length > 1 ? "s" : ""}` : c?.contact}</div>
                     </td>
                     <td style={{ minWidth: 170 }}>
                       <div className="cell-main">

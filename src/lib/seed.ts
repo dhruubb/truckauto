@@ -3,7 +3,7 @@
 // whenever the demo is opened. All names, phone numbers and companies are fictional.
 
 import { CITIES, PLANNED_KMPH, ROUTES, describeLocation, pointAlong, resolveRoute } from "./geo";
-import { DELAY_REASONS, buildMessage, trackingLink } from "./messages";
+import { DELAY_REASONS, buildMessage, cargoPhrase } from "./messages";
 import type {
   Alert,
   AppState,
@@ -14,11 +14,12 @@ import type {
   GpsPing,
   Settings,
   Shipment,
+  ShipmentClient,
   Truck,
   TruckStatus,
 } from "./types";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 const H = 3600_000;
 const MIN = 60_000;
 
@@ -180,6 +181,7 @@ export function createSeed(now: number): AppState {
     phone: phone(),
     email: `${contact.split(" ")[0].toLowerCase()}@${company.toLowerCase().replace(/[^a-z]+/g, "")}.example`,
     since: int(2017, 2025),
+    demo: true,
   }));
 
   // ---------- drivers ----------
@@ -330,7 +332,22 @@ export function createSeed(now: number): AppState {
     const id = hero ? shipmentId(1) : nextShipmentId();
     const customer = hero ? customers[0] : custFor(route.origin);
     const [cargo, wMin, wMax] = hero ? CARGO[0] : pick(CARGO);
-    const weightT = hero ? 18.5 : Math.round(Math.min(between(wMin, wMax), t.capacityT) * 10) / 10;
+    let primaryW = hero ? 18.5 : Math.round(Math.min(between(wMin, wMax), t.capacityT) * 10) / 10;
+    // Part loads: some trucks carry goods for several clients on the same trip.
+    const extraClients: ShipmentClient[] = [];
+    if (hero) {
+      extraClients.push({ customerId: customers[12].id, cargo: "Cashew kernels (export)", weightT: 6 }, { customerId: customers[11].id, cargo: "FMCG cartons", weightT: 5 });
+    } else if (i % 4 === 2) {
+      const n = rnd() < 0.5 ? 1 : 2;
+      for (let k = 0; k < n; k++) {
+        const other = pick(customers.slice(1).filter((c) => c.id !== customer.id && !extraClients.some((e) => e.customerId === c.id)));
+        const [oc] = pick(CARGO);
+        extraClients.push({ customerId: other.id, cargo: oc, weightT: Math.round(between(2, 5) * 10) / 10 });
+      }
+      const extraW = extraClients.reduce((n2, e) => n2 + e.weightT, 0);
+      primaryW = Math.max(3, Math.min(primaryW, t.capacityT - extraW));
+    }
+    const weightT = Math.round((primaryW + extraClients.reduce((n2, e) => n2 + e.weightT, 0)) * 10) / 10;
     let sStatus: Shipment["status"] = status === "delayed" ? "Delayed" : "In Transit";
     let outAt: number | null = null;
     if (remaining < 30 && status === "moving") {
@@ -362,6 +379,7 @@ export function createSeed(now: number): AppState {
       delayReason: status === "delayed" ? pick(DELAY_REASONS) : null,
       status: sStatus,
       lastNotifiedEta: eta,
+      extraClients,
     };
     t.shipmentId = id;
     shipments.push(s);
@@ -415,20 +433,24 @@ export function createSeed(now: number): AppState {
     });
 
     // customer notifications
-    const link = trackingLink(id);
-    const base = { customerName: customer.contact, shipmentId: id, pickup: route.origin, delivery: route.destination, trackingLink: link, company: DEFAULT_SETTINGS.companyName };
-    const push = (kind: CustomerNotification["kind"], at: number, etaAt: number, extra: Partial<Parameters<typeof buildMessage>[1]> = {}, status: CustomerNotification["status"] = "Sent") =>
-      notifications.push({
-        id: `NT-${++ntN}`,
-        shipmentId: id,
-        customerId: customer.id,
-        channel: rnd() < 0.78 ? "WhatsApp" : "SMS",
-        kind,
-        message: buildMessage(kind, { ...base, eta: etaAt, now: at, ...extra }),
-        status,
-        trigger: "Automatic",
-        createdAt: at,
-      });
+    const recipients = [
+      { c: customer, cargo: cargoPhrase(cargo, primaryW) },
+      ...extraClients.map((e) => ({ c: customers.find((x) => x.id === e.customerId)!, cargo: cargoPhrase(e.cargo, e.weightT) })),
+    ];
+    const push = (kind: CustomerNotification["kind"], at: number, etaAt: number, extra: Partial<Parameters<typeof buildMessage>[1]> = {}, status: CustomerNotification["status"] = "Sent") => {
+      for (const r of recipients)
+        notifications.push({
+          id: `NT-${++ntN}`,
+          shipmentId: id,
+          customerId: r.c.id,
+          channel: "WhatsApp",
+          kind,
+          message: buildMessage(kind, { customerName: r.c.contact, shipmentId: id, pickup: route.origin, delivery: route.destination, cargo: r.cargo, vehicle: t.reg, company: DEFAULT_SETTINGS.companyName, eta: etaAt, now: at, ...extra }),
+          status,
+          trigger: "Automatic",
+          createdAt: at,
+        });
+    };
     push("Shipment Dispatched", dispatchAt + 2 * MIN, plannedEta);
     if (frac > 0.3 && !hero) {
       const midKm = t.kmDone * 0.7;
@@ -504,6 +526,7 @@ export function createSeed(now: number): AppState {
       delayReason: null,
       status: u.status,
       lastNotifiedEta: null,
+      extraClients: [],
     };
     if (truck) {
       truck.shipmentId = id;
@@ -593,6 +616,7 @@ export function createSeed(now: number): AppState {
       delayReason: null,
       status: "Delivered",
       lastNotifiedEta: deliveredAt,
+      extraClients: [],
     };
     shipments.push(s);
     trucks.push(t);
@@ -612,7 +636,7 @@ export function createSeed(now: number): AppState {
       createdAt: deliveredAt,
       state: k < 6 ? "resolved" : "open",
     });
-    const msgBase = { customerName: customer.contact, shipmentId: id, pickup: route.origin, delivery: route.destination, trackingLink: trackingLink(id), company: DEFAULT_SETTINGS.companyName };
+    const msgBase = { customerName: customer.contact, shipmentId: id, pickup: route.origin, delivery: route.destination, cargo: cargoPhrase(cargo, s.weightT), vehicle: t.reg, company: DEFAULT_SETTINGS.companyName };
     notifications.push({
       id: `NT-${++ntN}`,
       shipmentId: id,
@@ -674,6 +698,7 @@ export function createSeed(now: number): AppState {
       delayReason: late > 60 ? pick(DELAY_REASONS) : null,
       status: "Delivered",
       lastNotifiedEta: deliveredAt,
+      extraClients: [],
     });
     addEvent(id, dispatchAt - 22 * H, "Shipment created", route.origin);
     addEvent(id, dispatchAt, "Shipment dispatched", route.origin);

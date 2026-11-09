@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import FleetMap from "@/components/FleetMap";
-import { IconChevronRight } from "@/components/icons";
+import { useState } from "react";
+import { IconChevronRight, IconPlus } from "@/components/icons";
+import { NewShipmentModal } from "@/components/ShipmentModals";
 import { Plate, cx, useNow } from "@/components/ui";
 import { fleetCounts, worstDelays } from "@/lib/metrics";
 import { findTruck, simNow, useAppState } from "@/lib/store";
@@ -15,6 +17,7 @@ export default function OverviewPage() {
   const now = simNow(s);
   useNow(5000);
   const c = fleetCounts(s);
+  const [creating, setCreating] = useState(false);
   const hour = new Date(now).getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const dateLabel = new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" });
@@ -48,6 +51,9 @@ export default function OverviewPage() {
           <p style={{ marginTop: 0, marginBottom: 2 }}>{dateLabel}</p>
           <h1>{greeting}</h1>
         </div>
+        <button className="btn primary" onClick={() => setCreating(true)}>
+          <IconPlus size={17} /> New shipment
+        </button>
       </div>
 
       <section className="hero">
@@ -154,6 +160,15 @@ export default function OverviewPage() {
           </div>
         </section>
       </div>
+      {creating && (
+        <NewShipmentModal
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            router.push(`/shipments/${id}`);
+          }}
+        />
+      )}
     </div>
   );
 }

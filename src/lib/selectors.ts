@@ -1,7 +1,7 @@
 // Pure read helpers shared by the browser store and the server API routes.
 
 import { CITIES, describeLocation, resolveRoute } from "./geo";
-import type { AppState, Shipment, Truck, TruckStatus } from "./types";
+import type { AppState, Shipment, ShipmentClient, Truck, TruckStatus } from "./types";
 
 export function findTruck(s: AppState, id: string | null | undefined) {
   return id ? s.trucks.find((t) => t.id === id) : undefined;
@@ -36,4 +36,10 @@ export function truckLocation(t: Truck): string {
     return describeLocation(r, t.kmDone).label;
   }
   return `${t.depot} depot, ${CITIES[t.depot]?.state ?? ""}`;
+}
+
+/** Every client on a trip: the primary client first, then any part-load clients. */
+export function shipmentClients(s: Shipment): ShipmentClient[] {
+  const primaryWeight = Math.round((s.weightT - (s.extraClients ?? []).reduce((n, c) => n + c.weightT, 0)) * 10) / 10;
+  return [{ customerId: s.customerId, cargo: s.cargo, weightT: primaryWeight }, ...(s.extraClients ?? [])];
 }

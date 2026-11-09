@@ -352,8 +352,11 @@ function TruckDetail({ s, t }: { s: AppState; t: Truck }) {
           </div>
           <dl className="kv">
             <div>
-              <dt>Customer</dt>
-              <dd>{cust?.company}</dd>
+              <dt>{sh.extraClients?.length ? "Clients" : "Customer"}</dt>
+              <dd>
+                {cust?.company}
+                {sh.extraClients?.length ? ` +${sh.extraClients.length} more` : ""}
+              </dd>
             </div>
             <div>
               <dt>Cargo</dt>

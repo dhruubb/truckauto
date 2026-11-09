@@ -2574,3 +2574,79 @@ a.stone:active {
 .map-root .leaflet-tile-pane {
   filter: saturate(0.55) brightness(1.03) contrast(0.96);
 }
+
+/* ---------------------------------------------------------------- clients & WhatsApp */
+.client-card {
+  background: var(--surface-2);
+  border-radius: 16px;
+  padding: 14px 14px 16px;
+  box-shadow: inset 0 0 0 0.5px var(--line-2);
+}
+.icon-btn.wa {
+  background: rgba(31, 168, 85, 0.12);
+  color: var(--wa);
+}
+.icon-btn.wa:hover {
+  background: rgba(31, 168, 85, 0.2);
+  color: #178a45;
+}
+.btn.wa-btn {
+  background: rgba(31, 168, 85, 0.12);
+  color: #157a3d;
+}
+.btn.wa-btn:hover {
+  background: rgba(31, 168, 85, 0.2);
+}
+.wa-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: #157a3d;
+}
+.wa-thread {
+  background: #efe9e1;
+  border-radius: 18px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.wa-msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.wa-to {
+  font-size: 12px;
+  color: #6f6a62;
+  padding: 0 4px;
+}
+.wa-bubble {
+  max-width: 92%;
+  background: #d9fdd3;
+  color: #111b21;
+  border-radius: 12px 4px 12px 12px;
+  padding: 8px 10px 6px;
+  font-size: 14px;
+  line-height: 1.42;
+  box-shadow: 0 1px 1px rgba(11, 20, 26, 0.1);
+  overflow-wrap: anywhere;
+}
+.wa-meta {
+  display: block;
+  text-align: right;
+  font-size: 11px;
+  color: #667781;
+  margin-top: 2px;
+}
+.wa-open {
+  font-size: 13px;
+  font-weight: 500;
+  color: #157a3d;
+  padding: 0 4px;
+}
